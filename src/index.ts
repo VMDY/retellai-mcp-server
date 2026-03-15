@@ -41,17 +41,33 @@ function createServer(): McpServer {
 async function runHTTP(): Promise<void> {
   const app = express();
   app.use(express.json());
+
+  const MCP_AUTH_TOKEN = process.env.MCP_AUTH_TOKEN;
+
   app.get("/health", (_req, res) => { res.json({ status: "ok", server: "retellai-mcp-server" }); });
+
   app.post("/mcp", async (req, res) => {
+    // Auth check: if MCP_AUTH_TOKEN is set, require Bearer token
+    if (MCP_AUTH_TOKEN) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || authHeader !== `Bearer ${MCP_AUTH_TOKEN}`) {
+        res.status(401).json({ error: "Unauthorized: invalid or missing Bearer token" });
+        return;
+      }
+    }
+
     const server = createServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => transport.close());
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   });
+
   const port = parseInt(process.env.PORT || String(DEFAULT_PORT));
   app.listen(port, "0.0.0.0", () => {
     console.error(`retellai-mcp-server running on http://0.0.0.0:${port}/mcp`);
+    if (MCP_AUTH_TOKEN) console.error("  Auth: Bearer token ENABLED");
+    else console.error("  Auth: DISABLED (set MCP_AUTH_TOKEN to enable)");
   });
 }
 
