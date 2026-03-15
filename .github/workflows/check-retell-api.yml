@@ -5,6 +5,10 @@ on:
     - cron: '0 9 1 * *'
   workflow_dispatch:
 
+permissions:
+  issues: write
+  contents: read
+
 jobs:
   check-api:
     runs-on: ubuntu-latest
@@ -27,10 +31,10 @@ jobs:
           OUR_COUNT=$(grep -roh 'registerTool(' src/tools/*.ts 2>/dev/null | wc -l || echo "0")
           echo "We have $OUR_COUNT tools"
 
-          echo "=== Comparing ==="
           COVERED="create-phone-call create-web-call get-call list-calls update-call delete-call create-chat create-sms-chat get-chat create-chat-completion list-chat update-chat end-chat create-phone-number get-phone-number list-phone-numbers update-phone-number delete-phone-number create-agent get-agent list-agents update-agent delete-agent publish-agent get-agent-versions create-chat-agent get-chat-agent list-chat-agents update-chat-agent delete-chat-agent publish-chat-agent get-chat-agent-versions create-retell-llm get-retell-llm list-retell-llms update-retell-llm delete-retell-llm create-conversation-flow get-conversation-flow list-conversation-flows update-conversation-flow delete-conversation-flow create-conversation-flow-component get-conversation-flow-component list-conversation-flow-components update-conversation-flow-component delete-conversation-flow-component get-mcp-tools create-knowledge-base get-knowledge-base list-knowledge-bases delete-knowledge-base add-knowledge-base-sources delete-knowledge-base-source add-voice clone-voice search-voice get-voice list-voices create-batch-call create-batch-test get-concurrency import-phone-number register-phone-call llm-websocket"
 
           NEW=""
+          NEW_COUNT=0
           while IFS= read -r ep; do
             [ -z "$ep" ] && continue
             FOUND=false
@@ -38,75 +42,45 @@ jobs:
               if [ "$ep" = "$c" ]; then FOUND=true; break; fi
             done
             if [ "$FOUND" = "false" ]; then
-              NEW="${NEW}- ${ep}\n"
-              echo "NEW: $ep"
+              NEW="${NEW}- \`${ep}\` → https://docs.retellai.com/api-references/${ep}\n"
+              NEW_COUNT=$((NEW_COUNT + 1))
             fi
           done <<< "$RETELL_ENDPOINTS"
 
           echo "retell_count=$RETELL_COUNT" >> $GITHUB_OUTPUT
           echo "our_count=$OUR_COUNT" >> $GITHUB_OUTPUT
+          echo "new_count=$NEW_COUNT" >> $GITHUB_OUTPUT
 
-          if [ -n "$NEW" ]; then
+          if [ "$NEW_COUNT" -gt 0 ]; then
             echo "has_new=true" >> $GITHUB_OUTPUT
             printf "%b" "$NEW" > /tmp/new_endpoints.txt
-            echo "=== New endpoints found ==="
-            cat /tmp/new_endpoints.txt
           else
             echo "has_new=false" >> $GITHUB_OUTPUT
-            echo "=== All endpoints covered ==="
           fi
           exit 0
 
-      - name: Send alert email
+      - name: Create issue for new endpoints
         if: steps.check.outputs.has_new == 'true'
-        uses: dawidd6/action-send-mail@v4
+        uses: actions/github-script@v7
         with:
-          server_address: smtp-mail.outlook.com
-          server_port: 587
-          secure: false
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "Retell AI API — Nouveaux endpoints detectes"
-          to: ${{ secrets.EMAIL_USERNAME }}
-          from: ${{ secrets.EMAIL_USERNAME }}
-          body: |
-            Bonjour Valdo,
+          script: |
+            const fs = require('fs');
+            const newEndpoints = fs.readFileSync('/tmp/new_endpoints.txt', 'utf8');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🔔 ${process.env.NEW_COUNT} nouveaux endpoints Retell AI detectes`,
+              body: `## Scan mensuel — Nouveaux endpoints\n\nLe scan automatique a detecte **${process.env.NEW_COUNT} nouveaux endpoints** dans l'API Retell AI non couverts par le MCP server.\n\n**Endpoints Retell detectes:** ${process.env.RETELL_COUNT}\n**Outils MCP actuels:** ${process.env.OUR_COUNT}\n\n### Nouveaux endpoints a implementer\n\n${newEndpoints}\n\n### Action\n\nOuvre [claude.ai](https://claude.ai) et demande :\n> "Ajoute les nouveaux endpoints Retell: [liste ci-dessus]"\n\n---\n*Scan automatique mensuel — retellai-mcp-server*`,
+              labels: ['api-update']
+            });
+        env:
+          NEW_COUNT: ${{ steps.check.outputs.new_count }}
+          RETELL_COUNT: ${{ steps.check.outputs.retell_count }}
+          OUR_COUNT: ${{ steps.check.outputs.our_count }}
 
-            Le scan mensuel a detecte de nouveaux endpoints Retell AI
-            non couverts par ton retellai-mcp-server.
-
-            Endpoints Retell: ${{ steps.check.outputs.retell_count }}
-            Outils MCP actuels: ${{ steps.check.outputs.our_count }}
-
-            Nouveaux endpoints:
-            $(cat /tmp/new_endpoints.txt)
-
-            Action: Ouvre claude.ai et demande
-            "Ajoute les nouveaux endpoints Retell: [liste ci-dessus]"
-
-            -- retellai-mcp-server scan automatique
-
-      - name: Send all-clear email
+      - name: Log all-clear
         if: steps.check.outputs.has_new == 'false'
-        uses: dawidd6/action-send-mail@v4
-        with:
-          server_address: smtp-mail.outlook.com
-          server_port: 587
-          secure: false
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "Retell AI API — Couverture 100 pourcent confirmee"
-          to: ${{ secrets.EMAIL_USERNAME }}
-          from: ${{ secrets.EMAIL_USERNAME }}
-          body: |
-            Bonjour Valdo,
-
-            Scan mensuel OK. Ton retellai-mcp-server couvre 100%
-            des endpoints Retell AI.
-
-            Endpoints Retell: ${{ steps.check.outputs.retell_count }}
-            Outils MCP: ${{ steps.check.outputs.our_count }}
-
-            Rien a faire.
-
-            -- retellai-mcp-server scan automatique
+        run: |
+          echo "✅ Couverture 100% confirmee"
+          echo "Endpoints Retell: ${{ steps.check.outputs.retell_count }}"
+          echo "Outils MCP: ${{ steps.check.outputs.our_count }}"
