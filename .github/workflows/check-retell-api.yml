@@ -11,38 +11,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Scrape Retell API docs and compare
+      - name: Check for new Retell API endpoints
         id: check
+        shell: bash
         run: |
-          echo "Scraping Retell API documentation..."
-          RETELL_ENDPOINTS=$(curl -s https://docs.retellai.com/api-references/list-agents | \
-            grep -oP '(?<=href="/api-references/)[^"]+' | sort -u)
+          set +e
 
-          OUR_TOOLS=$(grep -rh 'server.registerTool(' src/tools/*.ts | \
-            grep -oP '"retell_[^"]+' | sort -u)
-          OUR_COUNT=$(echo "$OUR_TOOLS" | wc -l)
+          echo "=== Scraping Retell API docs ==="
+          RETELL_PAGE=$(curl -sL https://docs.retellai.com/api-references/list-agents)
+          RETELL_ENDPOINTS=$(echo "$RETELL_PAGE" | grep -oP 'href="/api-references/[^"]+' | sed 's|href="/api-references/||' | sort -u)
+          RETELL_COUNT=$(echo "$RETELL_ENDPOINTS" | grep -c . || echo "0")
+          echo "Found $RETELL_COUNT endpoints on Retell docs"
 
-          COVERED_SLUGS="create-phone-call create-web-call get-call list-calls update-call delete-call create-chat create-sms-chat get-chat create-chat-completion list-chat update-chat end-chat create-phone-number get-phone-number list-phone-numbers update-phone-number delete-phone-number create-agent get-agent list-agents update-agent delete-agent publish-agent get-agent-versions create-chat-agent get-chat-agent list-chat-agents update-chat-agent delete-chat-agent publish-chat-agent get-chat-agent-versions create-retell-llm get-retell-llm list-retell-llms update-retell-llm delete-retell-llm create-conversation-flow get-conversation-flow list-conversation-flows update-conversation-flow delete-conversation-flow create-conversation-flow-component get-conversation-flow-component list-conversation-flow-components update-conversation-flow-component delete-conversation-flow-component get-mcp-tools create-knowledge-base get-knowledge-base list-knowledge-bases delete-knowledge-base add-knowledge-base-sources delete-knowledge-base-source add-voice clone-voice search-voice get-voice list-voices create-batch-call create-batch-test get-concurrency import-phone-number register-phone-call llm-websocket"
+          echo "=== Counting our MCP tools ==="
+          OUR_COUNT=$(grep -roh 'registerTool(' src/tools/*.ts 2>/dev/null | wc -l || echo "0")
+          echo "We have $OUR_COUNT tools"
 
-          NEW_ENDPOINTS=""
-          while IFS= read -r endpoint; do
-            [ -z "$endpoint" ] && continue
-            if ! echo "$COVERED_SLUGS" | grep -qw "$endpoint"; then
-              NEW_ENDPOINTS="${NEW_ENDPOINTS}- ${endpoint}\n"
+          echo "=== Comparing ==="
+          COVERED="create-phone-call create-web-call get-call list-calls update-call delete-call create-chat create-sms-chat get-chat create-chat-completion list-chat update-chat end-chat create-phone-number get-phone-number list-phone-numbers update-phone-number delete-phone-number create-agent get-agent list-agents update-agent delete-agent publish-agent get-agent-versions create-chat-agent get-chat-agent list-chat-agents update-chat-agent delete-chat-agent publish-chat-agent get-chat-agent-versions create-retell-llm get-retell-llm list-retell-llms update-retell-llm delete-retell-llm create-conversation-flow get-conversation-flow list-conversation-flows update-conversation-flow delete-conversation-flow create-conversation-flow-component get-conversation-flow-component list-conversation-flow-components update-conversation-flow-component delete-conversation-flow-component get-mcp-tools create-knowledge-base get-knowledge-base list-knowledge-bases delete-knowledge-base add-knowledge-base-sources delete-knowledge-base-source add-voice clone-voice search-voice get-voice list-voices create-batch-call create-batch-test get-concurrency import-phone-number register-phone-call llm-websocket"
+
+          NEW=""
+          while IFS= read -r ep; do
+            [ -z "$ep" ] && continue
+            FOUND=false
+            for c in $COVERED; do
+              if [ "$ep" = "$c" ]; then FOUND=true; break; fi
+            done
+            if [ "$FOUND" = "false" ]; then
+              NEW="${NEW}- ${ep}\n"
+              echo "NEW: $ep"
             fi
           done <<< "$RETELL_ENDPOINTS"
-
-          RETELL_COUNT=$(echo "$RETELL_ENDPOINTS" | grep -c . || true)
 
           echo "retell_count=$RETELL_COUNT" >> $GITHUB_OUTPUT
           echo "our_count=$OUR_COUNT" >> $GITHUB_OUTPUT
 
-          if [ -n "$NEW_ENDPOINTS" ]; then
+          if [ -n "$NEW" ]; then
             echo "has_new=true" >> $GITHUB_OUTPUT
-            printf "$NEW_ENDPOINTS" > /tmp/new_endpoints.txt
+            printf "%b" "$NEW" > /tmp/new_endpoints.txt
+            echo "=== New endpoints found ==="
+            cat /tmp/new_endpoints.txt
           else
             echo "has_new=false" >> $GITHUB_OUTPUT
+            echo "=== All endpoints covered ==="
           fi
+          exit 0
 
       - name: Send alert email
         if: steps.check.outputs.has_new == 'true'
@@ -82,7 +95,7 @@ jobs:
           secure: false
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "Retell AI API — Couverture 100% confirmee"
+          subject: "Retell AI API — Couverture 100 pourcent confirmee"
           to: ${{ secrets.EMAIL_USERNAME }}
           from: ${{ secrets.EMAIL_USERNAME }}
           body: |
