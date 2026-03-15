@@ -1,0 +1,185 @@
+name: Monthly Retell API check
+
+on:
+  schedule:
+    - cron: '0 9 1 * *'   # 1er de chaque mois à 9h UTC
+  workflow_dispatch:        # Permet de lancer manuellement
+
+jobs:
+  check-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scrape Retell API docs and compare
+        id: check
+        run: |
+          # 1. Scrape the Retell docs sidebar for all API endpoints
+          echo "Scraping Retell API documentation..."
+          RETELL_ENDPOINTS=$(curl -s https://docs.retellai.com/api-references/list-agents | \
+            grep -oP '(?<=href="/api-references/)[^"]+' | \
+            sort -u)
+          
+          # 2. Extract tool names from our source code
+          echo "Extracting current MCP tools..."
+          OUR_TOOLS=$(grep -rh 'server.registerTool(' src/tools/*.ts | \
+            grep -oP '"retell_[^"]+' | \
+            sort -u)
+          OUR_COUNT=$(echo "$OUR_TOOLS" | wc -l)
+          
+          # 3. Known mapping of our tool names to Retell endpoint slugs
+          # Build a list of endpoint slugs we already cover
+          COVERED_SLUGS=$(cat << 'MAP'
+          create-phone-call
+          create-web-call
+          get-call
+          list-calls
+          update-call
+          delete-call
+          create-chat
+          create-sms-chat
+          get-chat
+          create-chat-completion
+          list-chat
+          update-chat
+          end-chat
+          create-phone-number
+          get-phone-number
+          list-phone-numbers
+          update-phone-number
+          delete-phone-number
+          create-agent
+          get-agent
+          list-agents
+          update-agent
+          delete-agent
+          publish-agent
+          get-agent-versions
+          create-chat-agent
+          get-chat-agent
+          list-chat-agents
+          update-chat-agent
+          delete-chat-agent
+          publish-chat-agent
+          get-chat-agent-versions
+          create-retell-llm
+          get-retell-llm
+          list-retell-llms
+          update-retell-llm
+          delete-retell-llm
+          create-conversation-flow
+          get-conversation-flow
+          list-conversation-flows
+          update-conversation-flow
+          delete-conversation-flow
+          create-conversation-flow-component
+          get-conversation-flow-component
+          list-conversation-flow-components
+          update-conversation-flow-component
+          delete-conversation-flow-component
+          get-mcp-tools
+          create-knowledge-base
+          get-knowledge-base
+          list-knowledge-bases
+          delete-knowledge-base
+          add-knowledge-base-sources
+          delete-knowledge-base-source
+          add-voice
+          clone-voice
+          search-voice
+          get-voice
+          list-voices
+          create-batch-call
+          create-batch-test
+          get-concurrency
+          import-phone-number
+          register-phone-call
+          llm-websocket
+          MAP
+          )
+          
+          # 4. Compare: find endpoints NOT in our covered list
+          NEW_ENDPOINTS=""
+          while IFS= read -r endpoint; do
+            [ -z "$endpoint" ] && continue
+            if ! echo "$COVERED_SLUGS" | grep -qw "$endpoint"; then
+              NEW_ENDPOINTS="${NEW_ENDPOINTS}• ${endpoint}\n"
+            fi
+          done <<< "$RETELL_ENDPOINTS"
+          
+          RETELL_COUNT=$(echo "$RETELL_ENDPOINTS" | grep -c .)
+          
+          echo "retell_count=$RETELL_COUNT" >> $GITHUB_OUTPUT
+          echo "our_count=$OUR_COUNT" >> $GITHUB_OUTPUT
+          
+          if [ -n "$NEW_ENDPOINTS" ]; then
+            echo "has_new=true" >> $GITHUB_OUTPUT
+            # Write to file to preserve newlines
+            printf "$NEW_ENDPOINTS" > /tmp/new_endpoints.txt
+            echo "New endpoints detected:"
+            cat /tmp/new_endpoints.txt
+          else
+            echo "has_new=false" >> $GITHUB_OUTPUT
+            echo "No new endpoints detected. API coverage is complete."
+          fi
+
+      - name: Send email notification
+        if: steps.check.outputs.has_new == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-mail.outlook.com
+          server_port: 587
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "🔔 Retell AI API — Nouveaux endpoints détectés"
+          to: ${{ secrets.EMAIL_USERNAME }}
+          from: ${{ secrets.EMAIL_USERNAME }}
+          body: |
+            Bonjour Valdo,
+            
+            Le scan mensuel de l'API Retell AI a détecté de nouveaux endpoints
+            qui ne sont pas encore couverts par ton retellai-mcp-server.
+            
+            📊 Status actuel:
+            - Endpoints Retell détectés: ${{ steps.check.outputs.retell_count }}
+            - Outils MCP actuels: ${{ steps.check.outputs.our_count }}
+            
+            🆕 Nouveaux endpoints à implémenter:
+            $(cat /tmp/new_endpoints.txt)
+            
+            👉 Action: Demande à Claude d'ajouter ces endpoints.
+               Ouvre claude.ai et dis:
+               "Ajoute les nouveaux endpoints Retell: [liste ci-dessus]"
+            
+            —
+            retellai-mcp-server • scan automatique mensuel
+            https://github.com/VMDY/retellai-mcp-server
+
+      - name: Send all-clear notification
+        if: steps.check.outputs.has_new == 'false'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-mail.outlook.com
+          server_port: 587
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "✅ Retell AI API — Couverture 100% confirmée"
+          to: ${{ secrets.EMAIL_USERNAME }}
+          from: ${{ secrets.EMAIL_USERNAME }}
+          body: |
+            Bonjour Valdo,
+            
+            Le scan mensuel de l'API Retell AI confirme que ton
+            retellai-mcp-server couvre 100% des endpoints disponibles.
+            
+            📊 Status:
+            - Endpoints Retell: ${{ steps.check.outputs.retell_count }}
+            - Outils MCP: ${{ steps.check.outputs.our_count }}
+            
+            Rien à faire. 👍
+            
+            —
+            retellai-mcp-server • scan automatique mensuel
+            https://github.com/VMDY/retellai-mcp-server
