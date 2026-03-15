@@ -1,0 +1,22 @@
+{
+  "name": "retellai-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server wrapping the Retell AI REST API — 64 tools, 100% coverage",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "TRANSPORT=http node dist/index.js",
+    "dev": "TRANSPORT=http npx tsx src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "express": "^4.21.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
