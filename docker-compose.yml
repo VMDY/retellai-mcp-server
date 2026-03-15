@@ -1,6 +1,7 @@
 services:
   retellai-mcp:
     image: ghcr.io/vmdy/retellai-mcp-server:latest
+    pull_policy: always
     restart: unless-stopped
     labels:
       - traefik.enable=true
@@ -10,5 +11,6 @@ services:
       - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=3010
     environment:
       - RETELL_API_KEY=${RETELL_API_KEY}
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
       - TRANSPORT=http
       - PORT=3010
